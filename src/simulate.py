@@ -16,6 +16,7 @@ def simulate_metric(timestamps, business_mean, business_scale, offhours_mean, of
     
     return metric
 
+# TODO: refactor to use a single function instead of two separate functions for business and batch metrics
 def simulate_batch_metrics(timestamps, server_type, batch_mean, batch_scale, clip_min=0, clip_max=100):
     if server_type == "batch_worker":
         mean = np.where((timestamps.hour >= 2) & (timestamps.hour < 3), batch_mean, 0)
@@ -28,6 +29,7 @@ def simulate_batch_metrics(timestamps, server_type, batch_mean, batch_scale, cli
     else:
         return np.zeros(len(timestamps))
 
+# Generate a DataFrame for a single server with the given metrics
 def generate_row(server_id, server_type, cpu, memory_percent, disk_io, timestamps):
     df = pd.DataFrame({
         "timestamp": timestamps,
@@ -120,6 +122,7 @@ anomalies = {
     ]
 }
 
+# Inject anomalies into the simulated data
 def inject_anomalies(df, anomalies) :
     for server_id, anomaly_list in anomalies.items():
         for anomaly in anomaly_list:
@@ -141,6 +144,7 @@ def inject_anomalies(df, anomalies) :
 
 inject_anomalies(full_df, anomalies)
 
+# Save the simulated data to a CSV file
 full_df.to_csv('../data/simulated_server_metrics.csv', index=False)
 
 
