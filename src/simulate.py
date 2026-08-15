@@ -124,6 +124,6 @@ def inject_anomalies(df, anomalies) :
 
 inject_anomalies(full_df, anomalies)
 
-full_df.to_csv('simulated_server_metrics.csv', index=False)
+full_df.to_csv('../data/simulated_server_metrics.csv', index=False)
 
 
