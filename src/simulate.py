@@ -38,7 +38,8 @@ def generate_row(server_id, server_type, cpu, memory_percent, disk_io, timestamp
         "cpu_percent": cpu,
         "memory_percent": memory_percent,
         "disk_io": disk_io,
-        "is_anomaly": np.zeros(len(timestamps), dtype=int)
+        "is_anomaly": np.zeros(len(timestamps), dtype=int),
+        "anomaly_type": np.full(len(timestamps), 'normal', dtype=object)
     })
     
     return df
@@ -122,6 +123,7 @@ anomalies = {
     ]
 }
 
+# TODO: currently anomaly type is manually overwritten, what if there is 2 anomalies happening at the same time? Need to figure out a way to handle that.
 # Inject anomalies into the simulated data
 def inject_anomalies(df, anomalies) :
     for server_id, anomaly_list in anomalies.items():
@@ -133,11 +135,14 @@ def inject_anomalies(df, anomalies) :
             if "cpu_mean" in anomaly:
                 values = np.random.normal(loc=anomaly["cpu_mean"], scale=anomaly["cpu_scale"], size=len(condition))
                 df.loc[condition.index, 'cpu_percent'] = np.clip(values, 0, 100)  # Ensure CPU percentage stays within 0-100
+                df.loc[condition.index, 'anomaly_type'] = 'cpu_anomaly'
             if "memory_mean" in anomaly:
                 values = np.random.normal(loc=anomaly["memory_mean"], scale=anomaly["memory_scale"], size=len(condition))
                 df.loc[condition.index, 'memory_percent'] = np.clip(values, 0, 100)  # Ensure memory percentage stays within 0-100
+                df.loc[condition.index, 'anomaly_type'] = 'memory_anomaly'
             if "disk_io_mean" in anomaly:
                 df.loc[condition.index, 'disk_io'] = np.random.normal(loc=anomaly["disk_io_mean"], scale=anomaly["disk_io_scale"], size=len(condition))
+                df.loc[condition.index, 'anomaly_type'] = 'disk_io_anomaly'
             
             df.loc[condition.index, 'is_anomaly'] = 1
     
