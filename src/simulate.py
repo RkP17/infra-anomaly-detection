@@ -86,7 +86,7 @@ anomalies = {
     # Spike in memory usage and drop in CPU usage for web_2 server
     "web_2": [
             {"start": "2025-01-16 16:00:00", "end": "2025-01-16 16:35:00", "memory_mean": 90, "memory_scale": 10},
-            {"start": "2025-01-21 04:10:00", "end": "2025-01-21 07:10:00", "cpu_mean": 10, "cpu_scale": 5}
+            {"start": "2025-01-21 04:10:00", "end": "2025-01-21 07:10:00", "cpu_mean": 2, "cpu_scale": 2}
     ],
     # Drop in disk I/O for database_1 server
     "database_1": [
