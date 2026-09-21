@@ -1,155 +1,344 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from collections import defaultdict
 
 # Set a random seed for reproducibility
 np.random.seed(42)
 
-# TODO: refactor to use a single function instead of two separate functions for business and batch metrics
-def simulate_metric(timestamps, business_mean, business_scale, offhours_mean, offhours_scale, clip_min=0, clip_max=100):
-    mean = np.where((timestamps.hour >= 9) & (timestamps.hour < 17) & (timestamps.dayofweek < 5), business_mean, offhours_mean)
-    scale = np.where((timestamps.hour >= 9) & (timestamps.hour < 17) & (timestamps.dayofweek < 5), business_scale, offhours_scale)
-    
-    metric = np.random.normal(loc=mean, scale=scale, size=len(timestamps))
-    metric = np.clip(metric, clip_min, clip_max)
-    
-    return metric
+# ========= Configuration =========
 
-# TODO: refactor to use a single function instead of two separate functions for business and batch metrics
-def simulate_batch_metrics(timestamps, server_type, batch_mean, batch_scale, clip_min=0, clip_max=100):
+# Set the timeframe to be 6 weeks of 5-minute intervals
+TIMESTAMPS = pd.date_range(
+    start="2025-01-01", 
+    periods=12096, 
+    freq="5min"
+)
+
+# Defining the server types
+SERVER_TYPES = [
+    "web", 
+    "database", 
+    "cache", 
+    "load_balancer", 
+    "batch_worker" 
+]
+
+# Defining the server profiles for each server type
+SERVER_PROFILES = {
+    "web": {
+        "cpu_base": 25,
+        "cpu_amplitude": 30,
+        "memory_base": 35,
+        "memory_amplitude": 20,
+        "disk_base": 50,
+        "disk_amplitude": 60,
+        "noise": 3,
+    },
+
+    "database": {
+        "cpu_base": 30,
+        "cpu_amplitude": 35,
+        "memory_base": 55,
+        "memory_amplitude": 20,
+        "disk_base": 120,
+        "disk_amplitude": 150,
+        "noise": 5,
+    },
+
+    "cache": {
+        "cpu_base": 15,
+        "cpu_amplitude": 25,
+        "memory_base": 55,
+        "memory_amplitude": 20,
+        "disk_base": 20,
+        "disk_amplitude": 30,
+        "noise": 2,
+    },
+
+    "load_balancer": {
+        "cpu_base": 25,
+        "cpu_amplitude": 35,
+        "memory_base": 30,
+        "memory_amplitude": 20,
+        "disk_base": 20,
+        "disk_amplitude": 25,
+        "noise": 4,
+    },
+
+    "batch_worker": {
+        "cpu_base": 5,
+        "cpu_amplitude": 5,
+        "memory_base": 15,
+        "memory_amplitude": 5,
+        "disk_base": 10,
+        "disk_amplitude": 10,
+        "noise": 2,
+    }
+}
+
+# ========= Time based workload simulation =========
+
+def generate_workload(timestamps, server_type):
+    hour = timestamps.hour + timestamps.minute / 60.0
+    weekday = timestamps.dayofweek
+    
+    # Generate a cycle that peaks during business hours but is more quiet during off hours
+    daily_cycle = (
+        0.5 + 0.5 * np.sin(2 * np.pi * (hour - 6) / 24)
+    )
+    
+    # Weekends
+    weekend = np.where(weekday >= 5, 0.5, 1.0)  # Reduce workload on weekends
+    
+    # Combine the daily cycle and the weekend factor
+    workload = daily_cycle * weekend
+    
+    # Generate a batch worker specfic
     if server_type == "batch_worker":
-        mean = np.where((timestamps.hour >= 2) & (timestamps.hour < 3), batch_mean, 0)
-        scale = np.where((timestamps.hour >= 2) & (timestamps.hour < 3), batch_scale, 0)
-        
-        metric = np.random.normal(loc=mean, scale=scale, size=len(timestamps))
-        metric = np.clip(metric, clip_min, clip_max)
-        
-        return metric
-    else:
-        return np.zeros(len(timestamps))
+        # Batch workers have a spike in workload during the night (2 AM to 3 AM)
+        batch_spike = np.where((hour >= 2) & (hour < 3), 1.5, 1.0)
+        workload *= batch_spike
+    
+    return workload
 
-# Generate a DataFrame for a single server with the given metrics
-def generate_row(server_id, server_type, cpu, memory_percent, disk_io, timestamps):
-    df = pd.DataFrame({
+
+
+# ========= Add realistic noise to metrics =========
+
+def add_noise(metric, noise_level):
+    noise = np.random.normal(loc=0, scale=noise_level, size=len(metric))
+    return metric + noise
+
+
+
+# ========= Generate server metrics =========
+def simulate_server_metrics(server_id, server_type, timestamps, profile):
+    workload = generate_workload(timestamps, server_type)
+    
+    # server specific variation to simulate different servers of the same type
+    server_variation = np.random.normal(
+        1,
+        0.05
+    )    
+    
+    # ==== CPU ====
+    
+    cpu = (
+        profile["cpu_base"] +
+        profile["cpu_amplitude"] * workload * server_variation
+    )
+    
+    cpu = add_noise(cpu, profile["noise"])
+    
+    cpu = np.clip(cpu, 0, 100)  # Ensure CPU percentage stays within 0-100
+    
+    # ==== Memory ==== 
+    memory = (
+        profile["memory_base"] +
+        profile["memory_amplitude"] * workload * server_variation
+    )
+    
+    memory = add_noise(memory, profile["noise"])
+    
+    memory = np.clip(memory, 0, 100)  # Ensure memory percentage stays within 0-100
+    
+    # ==== Disk I/O ==== 
+    disk_io = (
+        profile["disk_base"] +
+        profile["disk_amplitude"] * workload * server_variation
+    )
+    
+    disk_io = add_noise(disk_io, profile["noise"])
+    
+    disk_io = np.clip(disk_io, 0, None)  # Ensure disk I/O is non-negative
+
+    return pd.DataFrame({
         "timestamp": timestamps,
         "server_id": server_id,
         "server_type": server_type,
         "cpu_percent": cpu,
-        "memory_percent": memory_percent,
+        "memory_percent": memory,
         "disk_io": disk_io,
-        "is_anomaly": np.zeros(len(timestamps), dtype=int),
-        "anomaly_type": np.full(len(timestamps), 'normal', dtype=object)
+        "is_anomaly": 0,
+        "anomaly_type": "normal"
     })
-    
-    return df
 
-# Set the timeframe to be 3 weeks of 5-minute intervals
-timestamps = pd.date_range(start="2025-01-01", periods=6048, freq="5min")
+# ========= Generate the simulated data for each server type and server id =========
+
 servers = []
-# Defining the server types and Ids for each
-serverTypes = ["web", "database", "cache", "load_balancer", "batch_worker" ]
-# Defining the server profiles for each server type
-serverProfiles = {
-    "web": {"cpu_business_mean": 50, "cpu_business_scale": 10, "cpu_offhours_mean": 20, "cpu_offhours_scale": 5, "mem_business_mean": 60, "mem_business_scale": 10, "mem_offhours_mean": 30, "mem_offhours_scale": 5, "disk_io_business_mean": 100, "disk_io_business_scale": 10, "disk_io_offhours_mean": 50, "disk_io_offhours_scale": 10},
-    "database": {"cpu_business_mean": 70, "cpu_business_scale": 15, "cpu_offhours_mean": 30, "cpu_offhours_scale": 10, "mem_business_mean": 80, "mem_business_scale": 5, "mem_offhours_mean": 50, "mem_offhours_scale": 2, "disk_io_business_mean": 300, "disk_io_business_scale": 50, "disk_io_offhours_mean": 150, "disk_io_offhours_scale": 20},
-    "cache": {"cpu_business_mean": 40, "cpu_business_scale": 5, "cpu_offhours_mean": 10, "cpu_offhours_scale": 3, "mem_business_mean": 80, "mem_business_scale": 10, "mem_offhours_mean": 50, "mem_offhours_scale": 10, "disk_io_business_mean": 50, "disk_io_business_scale": 10, "disk_io_offhours_mean": 20, "disk_io_offhours_scale": 5},
-    "load_balancer": { "cpu_business_mean":70, "cpu_business_scale": 25, "cpu_offhours_mean": 30, "cpu_offhours_scale": 5, "mem_business_mean": 70, "mem_business_scale": 20, "mem_offhours_mean": 40, "mem_offhours_scale": 5, "disk_io_business_mean": 50, "disk_io_business_scale": 10, "disk_io_offhours_mean": 20, "disk_io_offhours_scale": 5},
-    "batch_worker": {"cpu_business_mean": 60, "cpu_business_scale": 20, "mem_business_mean": 70, "mem_business_scale": 20,"disk_io_business_mean": 200, "disk_io_business_scale": 30}
-}
 
-# Generate the simulated data for each server type and server id
-for server_type in serverTypes:
-    for i in range(1, 4):
+for server_type in SERVER_TYPES:
+    for i in range(1,4):
         server_id = f"{server_type}_{i}"
-        profile = serverProfiles[server_type]
-        # Seperate generation for batch_worker servers since they have different metrics
-        # TODO: refactor to use a single function instead of two separate functions for business and batch metrics
-        if server_type == "batch_worker":
-            batch_cpu = simulate_batch_metrics(timestamps, server_type, profile["cpu_business_mean"], profile["cpu_business_scale"])
-            batch_memory_percent = simulate_batch_metrics(timestamps, server_type, profile["mem_business_mean"], profile["mem_business_scale"])
-            batch_disk_io = simulate_batch_metrics(timestamps, server_type, profile["disk_io_business_mean"], profile["disk_io_business_scale"], clip_min=0, clip_max=200)
-            servers.append(generate_row(server_id, server_type, batch_cpu, batch_memory_percent, batch_disk_io, timestamps))
-        else:
-            cpu = simulate_metric(timestamps, profile["cpu_business_mean"], profile["cpu_business_scale"], profile["cpu_offhours_mean"], profile["cpu_offhours_scale"])
-            memory_percent = simulate_metric(timestamps, profile["mem_business_mean"], profile["mem_business_scale"], profile["mem_offhours_mean"], profile["mem_offhours_scale"])
-            disk_io = simulate_metric(timestamps, profile["disk_io_business_mean"], profile["disk_io_business_scale"], profile["disk_io_offhours_mean"], profile["disk_io_offhours_scale"], clip_min=0, clip_max=500)
-            servers.append(generate_row(server_id, server_type, cpu, memory_percent, disk_io, timestamps))
+        profile = SERVER_PROFILES[server_type]
+        server_metrics = simulate_server_metrics(server_id, server_type, TIMESTAMPS, profile)
+        servers.append(server_metrics)
 
 full_df = pd.concat(servers, ignore_index=True)
 
+# ========= Define the anomalies =========
+
 anomalies = {
-    # Spike in CPU usage for web_1 server
+
     "web_1": [
-        {"start": "2025-01-10 10:00:00", "end": "2025-01-10 12:00:00", "cpu_mean": 95, "cpu_scale": 5}
+        {
+            "start": "2025-01-10 10:00",
+            "end": "2025-01-10 12:00",
+            "metric": "cpu_percent",
+            "anomaly_type": "cpu_spike",
+            "mean": 92,
+            "scale": 3
+        }
     ],
-    # Spike in memory usage and drop in CPU usage for web_2 server
+
     "web_2": [
-            {"start": "2025-01-16 16:00:00", "end": "2025-01-16 16:35:00", "memory_mean": 90, "memory_scale": 10},
-            {"start": "2025-01-21 04:10:00", "end": "2025-01-21 07:10:00", "cpu_mean": 2, "cpu_scale": 2}
+        {
+            "start": "2025-01-16 16:00",
+            "end": "2025-01-16 16:35",
+            "metric": "memory_percent",
+            "anomaly_type": "memory_spike",
+            "mean": 92,
+            "scale": 3
+        },
+        {
+            "start": "2025-01-21 04:10",
+            "end": "2025-01-21 07:10",
+            "metric": "cpu_percent",
+            "anomaly_type": "cpu_drop",
+            "mean": 3,
+            "scale": 1
+        }
     ],
-    # Drop in disk I/O for database_1 server
+
     "database_1": [
-        {"start": "2025-01-15 14:00:00", "end": "2025-01-15 16:00:00", "disk_io_mean": 100, "disk_io_scale": 25}
+        {
+            "start": "2025-01-15 14:00",
+            "end": "2025-01-15 16:00",
+            "metric": "disk_io",
+            "anomaly_type": "disk_io_drop",
+            "mean": 25,
+            "scale": 5
+        }
     ],
-    # Drop in CPU usage for database_2 server
+
     "database_2": [
-        {"start": "2025-01-20 10:35:00", "end": "2025-01-20 11:40:00", "cpu_mean": 20, "cpu_scale": 5}
+        {
+            "start": "2025-01-20 10:35",
+            "end": "2025-01-20 11:40",
+            "metric": "cpu_percent",
+            "anomaly_type": "cpu_drop",
+            "mean": 8,
+            "scale": 2
+        }
     ],
-    # Spike in memory usage for cache_3 server
+
     "cache_3": [
-        {"start": "2025-01-18 08:25:00", "end": "2025-01-18 08:50:00", "memory_mean": 100, "memory_scale": 10}
+        {
+            "start": "2025-01-18 08:25",
+            "end": "2025-01-18 08:50",
+            "metric": "memory_percent",
+            "anomaly_type": "memory_spike",
+            "mean": 95,
+            "scale": 2
+        }
     ],
-    # Drop in cpu usage for load_balancer_2 server
+
     "load_balancer_2": [
-        {"start": "2025-01-12 13:10:00", "end": "2025-01-12 13:25:00", "cpu_mean": 20, "cpu_scale": 2}
+        {
+            "start": "2025-01-12 13:10",
+            "end": "2025-01-12 13:25",
+            "metric": "cpu_percent",
+            "anomaly_type": "cpu_drop",
+            "mean": 8,
+            "scale": 2
+        }
     ],
-    # Spike in disk I/O for load_balancer_3 server
+
     "load_balancer_3": [
-        {"start": "2025-01-20 02:00:00", "end": "2025-01-20 02:30:00", "disk_io_mean": 40, "disk_io_scale": 5},
-        {"start": "2025-01-06 15:00:00", "end": "2025-01-06 15:20:00", "disk_io_mean": 60, "disk_io_scale": 10}
+        {
+            "start": "2025-01-20 02:00",
+            "end": "2025-01-20 02:30",
+            "metric": "disk_io",
+            "anomaly_type": "disk_io_spike",
+            "mean": 250,
+            "scale": 10
+        },
+        {
+            "start": "2025-01-06 15:00",
+            "end": "2025-01-06 15:20",
+            "metric": "disk_io",
+            "anomaly_type": "disk_io_spike",
+            "mean": 120,
+            "scale": 5
+        }
     ],
-    # Spike in CPU usage for batch_worker_1 server
+
     "batch_worker_1": [
-        {"start": "2025-01-14 03:40:00", "end": "2025-01-14 06:00:00", "cpu_mean": 90, "cpu_scale": 10}
+        {
+            "start": "2025-01-14 03:40",
+            "end": "2025-01-14 06:00",
+            "metric": "cpu_percent",
+            "anomaly_type": "cpu_spike",
+            "mean": 90,
+            "scale": 5
+        }
     ],
-    # Drop in memory usage for batch_worker_2 server
+
     "batch_worker_2": [
-        {"start": "2025-01-19 02:00:00", "end": "2025-01-19 02:15:00", "memory_mean": 10, "memory_scale": 2}
+        {
+            "start": "2025-01-19 02:00",
+            "end": "2025-01-19 02:15",
+            "metric": "memory_percent",
+            "anomaly_type": "memory_drop",
+            "mean": 3,
+            "scale": 1
+        }
     ],
-    # Spike in disk I/O for batch_worker_3 server
+
     "batch_worker_3": [
-        {"start": "2025-01-12 02:40:00", "end": "2025-01-12 03:00:00", "disk_io_mean": 300, "disk_io_scale": 30}
+        {
+            "start": "2025-01-12 02:40",
+            "end": "2025-01-12 03:00",
+            "metric": "disk_io",
+            "anomaly_type": "disk_io_spike",
+            "mean": 180,
+            "scale": 10
+        }
     ]
 }
 
-# TODO: currently anomaly type is manually overwritten, what if there is 2 anomalies happening at the same time? Need to figure out a way to handle that.
-# Inject anomalies into the simulated data
-def inject_anomalies(df, anomalies) :
+
+# ========= Inject Anomalies =========
+
+def inject_anomalies(df, anomalies):
     for server_id, anomaly_list in anomalies.items():
         for anomaly in anomaly_list:
             start = pd.to_datetime(anomaly["start"])
             end = pd.to_datetime(anomaly["end"])
             
-            condition = df.loc[(df['server_id'] == server_id) & (df['timestamp'].between(start, end))]
-            if "cpu_mean" in anomaly:
-                values = np.random.normal(loc=anomaly["cpu_mean"], scale=anomaly["cpu_scale"], size=len(condition))
-                df.loc[condition.index, 'cpu_percent'] = np.clip(values, 0, 100)  # Ensure CPU percentage stays within 0-100
-                df.loc[condition.index, 'anomaly_type'] = 'cpu_anomaly'
-            if "memory_mean" in anomaly:
-                values = np.random.normal(loc=anomaly["memory_mean"], scale=anomaly["memory_scale"], size=len(condition))
-                df.loc[condition.index, 'memory_percent'] = np.clip(values, 0, 100)  # Ensure memory percentage stays within 0-100
-                df.loc[condition.index, 'anomaly_type'] = 'memory_anomaly'
-            if "disk_io_mean" in anomaly:
-                df.loc[condition.index, 'disk_io'] = np.random.normal(loc=anomaly["disk_io_mean"], scale=anomaly["disk_io_scale"], size=len(condition))
-                df.loc[condition.index, 'anomaly_type'] = 'disk_io_anomaly'
+            condition = (
+                df.loc[(df['server_id'] == server_id) & 
+                       (df['timestamp'].between(start, end)
+                )]
+            )
+            
+            if anomaly["metric"] == "cpu_percent":
+                values = np.random.normal(loc=anomaly['mean'], scale=anomaly['scale'], size=len(condition))
+                df.loc[condition.index, 'cpu_percent'] = np.clip(values, 0, 100)
+            elif anomaly["metric"] == "memory_percent":
+                values = np.random.normal(loc=anomaly['mean'], scale=anomaly['scale'], size=len(condition))
+                df.loc[condition.index, 'memory_percent'] = np.clip(values, 0, 100)
+            elif anomaly["metric"] == "disk_io":
+                values = np.random.normal(loc=anomaly['mean'], scale=anomaly['scale'], size=len(condition))
+                df.loc[condition.index, 'disk_io'] = np.clip(values, 0, None)
             
             df.loc[condition.index, 'is_anomaly'] = 1
-    
+    return df
 
 inject_anomalies(full_df, anomalies)
 
 # Save the simulated data to a CSV file
 full_df.to_csv('../data/simulated_server_metrics.csv', index=False)
+print("Simulated server metrics with anomalies have been saved to 'simulated_server_metrics.csv'.")
 
 
