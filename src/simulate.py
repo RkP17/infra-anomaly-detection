@@ -160,6 +160,7 @@ def simulate_server_metrics(server_id, server_type, timestamps, profile):
         "memory_percent": memory,
         "disk_io": disk_io,
         "is_anomaly": 0,
+        "is_predictive_anomaly": 0,
         "anomaly_type": "normal"
     })
 
@@ -340,8 +341,63 @@ def inject_anomalies(df, anomalies):
 
 inject_anomalies(full_df, anomalies)
 
+# ========= Inject Predicitve Anomalies =========
+
+def inject_predictive_anomalies(df, anomalies):
+    rng = np.random.default_rng(42)
+    
+    for server_id, anomaly_list in anomalies.items():
+        for anomaly in anomaly_list:
+            random_num = rng.integers(5, 30)
+            start = pd.Timestamp(anomaly["start"])
+            
+            precursor_start = start - pd.Timedelta(minutes=int(random_num))
+            precursor_end = start - pd.Timedelta(minutes=5)  # Up to the start of the anomaly
+            
+            precursor_condition = df.loc[
+                (df['server_id'] == server_id) & 
+                (df['timestamp'].between(precursor_start, precursor_end))
+            ]
+            
+            indices = precursor_condition.index
+            
+            if anomaly["metric"] == "cpu_percent":
+                start_value = df.loc[precursor_condition.index[0], 'cpu_percent'] # Value at the start of the precursor period
+                end_value = anomaly['mean'] # Value at the end of the precursor period (just before the anomaly starts)
+                
+                # add some noise
+                noise_scale = np.random.normal(0, anomaly['scale'] / 2, len(precursor_condition))
+                trend = np.linspace(start_value, end_value, len(indices)) + noise_scale
+                
+                df.loc[indices, 'cpu_percent'] = np.clip(trend, 0, 100)
+                df.loc[indices, 'anomaly_type'] = f"predictive_{anomaly['anomaly_type']}"
+
+            if anomaly["metric"] == "memory_percent":
+                start_value = df.loc[precursor_condition.index[0], 'memory_percent']
+                end_value = anomaly['mean']
+                
+                noise_scale = np.random.normal(0, anomaly['scale'] / 2, len(precursor_condition))
+                trend = np.linspace(start_value, end_value, len(indices)) + noise_scale
+                
+                df.loc[indices, 'memory_percent'] = np.clip(trend, 0, 100)
+                df.loc[indices, 'anomaly_type'] = f"predictive_{anomaly['anomaly_type']}"
+            
+            if anomaly["metric"] == "disk_io":
+                start_value = df.loc[precursor_condition.index[0], 'disk_io']
+                end_value = anomaly['mean']
+                
+                noise_scale = np.random.normal(0, anomaly['scale'] / 2, len(precursor_condition))
+                trend = np.linspace(start_value, end_value, len(indices)) + noise_scale
+                
+                df.loc[indices, 'disk_io'] = np.clip(trend, 0, None)
+                df.loc[indices, 'anomaly_type'] = f"predictive_{anomaly['anomaly_type']}"
+                
+            df.loc[precursor_condition.index, 'is_predictive_anomaly'] = 1
+    return df
+        
+inject_predictive_anomalies(full_df, anomalies)      
+    
+
 # Save the simulated data to a CSV file
-full_df.to_csv('../data/simulated_server_metrics.csv', index=False)
+full_df.to_csv('../data/simulated_server_metric_with_predictive_anomalies.csv', index=False)
 print("Simulated server metrics with anomalies have been saved to 'simulated_server_metrics.csv'.")
-
-
