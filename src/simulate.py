@@ -324,12 +324,15 @@ def inject_anomalies(df, anomalies):
             
             if anomaly["metric"] == "cpu_percent":
                 values = np.random.normal(loc=anomaly['mean'], scale=anomaly['scale'], size=len(condition))
+                df.loc[condition.index, 'anomaly_type'] = anomaly['anomaly_type']
                 df.loc[condition.index, 'cpu_percent'] = np.clip(values, 0, 100)
             elif anomaly["metric"] == "memory_percent":
                 values = np.random.normal(loc=anomaly['mean'], scale=anomaly['scale'], size=len(condition))
+                df.loc[condition.index, 'anomaly_type'] = anomaly['anomaly_type']
                 df.loc[condition.index, 'memory_percent'] = np.clip(values, 0, 100)
             elif anomaly["metric"] == "disk_io":
                 values = np.random.normal(loc=anomaly['mean'], scale=anomaly['scale'], size=len(condition))
+                df.loc[condition.index, 'anomaly_type'] = anomaly['anomaly_type']
                 df.loc[condition.index, 'disk_io'] = np.clip(values, 0, None)
             
             df.loc[condition.index, 'is_anomaly'] = 1
