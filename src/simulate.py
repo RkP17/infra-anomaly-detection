@@ -348,7 +348,7 @@ def inject_predictive_anomalies(df, anomalies):
     
     for server_id, anomaly_list in anomalies.items():
         for anomaly in anomaly_list:
-            random_num = rng.integers(5, 30)
+            random_num = rng.integers(5, 60)
             start = pd.Timestamp(anomaly["start"])
             
             precursor_start = start - pd.Timedelta(minutes=int(random_num))
