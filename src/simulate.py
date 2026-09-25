@@ -7,10 +7,10 @@ np.random.seed(42)
 
 # ========= Configuration =========
 
-# Set the timeframe to be 6 weeks of 5-minute intervals
+# Set the timeframe to be 3 weeks of 5-minute intervals
 TIMESTAMPS = pd.date_range(
     start="2025-01-01", 
-    periods=12096, 
+    periods=6048 , 
     freq="5min"
 )
 
