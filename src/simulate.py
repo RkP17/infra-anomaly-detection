@@ -179,137 +179,103 @@ full_df = pd.concat(servers, ignore_index=True)
 
 # ========= Define the anomalies =========
 
-anomalies = {
+anomalies = {}
 
-    "web_1": [
-        {
-            "start": "2025-01-10 10:00",
-            "end": "2025-01-10 12:00",
-            "metric": "cpu_percent",
-            "anomaly_type": "cpu_spike",
-            "mean": 92,
-            "scale": 3
-        }
-    ],
+# ========= Generate Anomalies =========
 
-    "web_2": [
-        {
-            "start": "2025-01-16 16:00",
-            "end": "2025-01-16 16:35",
-            "metric": "memory_percent",
-            "anomaly_type": "memory_spike",
-            "mean": 92,
-            "scale": 3
-        },
-        {
-            "start": "2025-01-21 04:10",
-            "end": "2025-01-21 07:10",
-            "metric": "cpu_percent",
-            "anomaly_type": "cpu_drop",
-            "mean": 3,
-            "scale": 1
-        }
-    ],
+# The model strugled to detect the anomlies injected above, as this made the dataset extermely imbalanced. 
+# To make the dataset more balanced, we will generate additional anomalies for each server.
 
-    "database_1": [
-        {
-            "start": "2025-01-15 14:00",
-            "end": "2025-01-15 16:00",
-            "metric": "disk_io",
-            "anomaly_type": "disk_io_drop",
-            "mean": 25,
-            "scale": 5
-        }
-    ],
+def generate_anomalies(
+    server_ids,
+    start_date,
+    end_date,
+    seed=42
+):
+    rng = np.random.default_rng(seed)
+    start_date = pd.Timestamp(start_date)
+    end_date = pd.Timestamp(end_date)
+    
+    metrics = ["cpu_percent", "memory_percent", "disk_io"]
+    generated_anomalies = {}
 
-    "database_2": [
-        {
-            "start": "2025-01-20 10:35",
-            "end": "2025-01-20 11:40",
-            "metric": "cpu_percent",
-            "anomaly_type": "cpu_drop",
-            "mean": 8,
-            "scale": 2
-        }
-    ],
+    available_intervals = int((end_date - start_date).total_seconds() // 300)
+    if available_intervals < 13:
+        raise ValueError("The simulation window must contain at least 65 minutes")
 
-    "cache_3": [
-        {
-            "start": "2025-01-18 08:25",
-            "end": "2025-01-18 08:50",
-            "metric": "memory_percent",
-            "anomaly_type": "memory_spike",
-            "mean": 95,
-            "scale": 2
-        }
-    ],
+    for server_id in server_ids:
+        server_anomalies = []
+        anomalies_per_server = rng.integers(2, 6)  # Randomly choose between 1 to 5 anomalies per server
+        print(f"Generating {anomalies_per_server} anomalies for server {server_id}")
+        for _ in range(anomalies_per_server):
+            anomaly_type = rng.choice(["spike","drop"])
+            
+            anomaly_start_offset = rng.integers(0, int((end_date - start_date).total_seconds() // 300)) *5
+            start_time = start_date + pd.Timedelta(minutes=anomaly_start_offset)
+            anomaly_duration = rng.integers(2, 7) * 5
+            end_time = start_time + pd.Timedelta(minutes=anomaly_duration)
+            metric = rng.choice(metrics)
+            
+            available_minutes = int((end_date - start_date).total_seconds() // 60)
+            
+            if available_minutes < 5:
+                raise ValueError("end_date must be at least 5 minutes after start_date")
 
-    "load_balancer_2": [
-        {
-            "start": "2025-01-12 13:10",
-            "end": "2025-01-12 13:25",
-            "metric": "cpu_percent",
-            "anomaly_type": "cpu_drop",
-            "mean": 8,
-            "scale": 2
-        }
-    ],
+            server_rows = full_df.loc[full_df["server_id"] == server_id]
+            current_value = server_rows.iloc[
+                (server_rows["timestamp"] - start_time).abs().argmin()
+            ][metric]
 
-    "load_balancer_3": [
-        {
-            "start": "2025-01-20 02:00",
-            "end": "2025-01-20 02:30",
-            "metric": "disk_io",
-            "anomaly_type": "disk_io_spike",
-            "mean": 250,
-            "scale": 10
-        },
-        {
-            "start": "2025-01-06 15:00",
-            "end": "2025-01-06 15:20",
-            "metric": "disk_io",
-            "anomaly_type": "disk_io_spike",
-            "mean": 120,
-            "scale": 5
-        }
-    ],
-
-    "batch_worker_1": [
-        {
-            "start": "2025-01-14 03:40",
-            "end": "2025-01-14 06:00",
-            "metric": "cpu_percent",
-            "anomaly_type": "cpu_spike",
-            "mean": 90,
-            "scale": 5
-        }
-    ],
-
-    "batch_worker_2": [
-        {
-            "start": "2025-01-19 02:00",
-            "end": "2025-01-19 02:15",
-            "metric": "memory_percent",
-            "anomaly_type": "memory_drop",
-            "mean": 3,
-            "scale": 1
-        }
-    ],
-
-    "batch_worker_3": [
-        {
-            "start": "2025-01-12 02:40",
-            "end": "2025-01-12 03:00",
-            "metric": "disk_io",
-            "anomaly_type": "disk_io_spike",
-            "mean": 180,
-            "scale": 10
-        }
-    ]
-}
-
+            if anomaly_type == "spike":
+                if (metric in ["cpu_percent", "memory_percent"]):
+                    mean_value = current_value + rng.integers(20, 50)
+                    mean_value = np.clip(mean_value, 0, 100)
+                else:
+                    mean_value = np.clip(current_value + rng.integers(50, 100), 0, None)
+                scale_value = rng.integers(1, 5)
+            else:
+                if (metric == "cpu_percent") or (metric == "memory_percent"):
+                    mean_value = current_value - rng.integers(20, 50)
+                    mean_value = np.clip(mean_value, 0, 100)
+                else:
+                    mean_value = np.clip(current_value - rng.integers(50, 100), 0, None)
+                scale_value = rng.integers(1, 5)
+        
+            server_anomalies.append({
+                "start": start_time,
+                "end": end_time,
+                "metric": metric,
+                "anomaly_type": f'{metric}_{anomaly_type}',
+                "mean": mean_value,
+                "scale": scale_value
+            })
+        
+        generated_anomalies[server_id] = server_anomalies
+        
+    return generated_anomalies
 
 # ========= Inject Anomalies =========
+
+
+generated_anomalies = generate_anomalies(
+    server_ids=full_df["server_id"].unique(),
+    start_date=TIMESTAMPS.min(),
+    end_date=TIMESTAMPS.max(),
+    seed=42,
+)
+
+for server_id, anomaly_list in generated_anomalies.items():
+    anomalies.setdefault(server_id, []).extend(anomaly_list)
+
+# store the anomalies in a file for reference
+anomaly_reference = pd.DataFrame(
+    [
+        {"server_id": server_id, **anomaly}
+        for server_id, anomaly_list in generated_anomalies.items()
+        for anomaly in anomaly_list
+    ]
+)
+anomaly_reference.to_csv("../data/injected_anomalies_reference.csv", index=False)
 
 def inject_anomalies(df, anomalies):
     for server_id, anomaly_list in anomalies.items():
