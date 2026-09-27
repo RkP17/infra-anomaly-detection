@@ -205,8 +205,7 @@ def generate_anomalies(
 
     for server_id in server_ids:
         server_anomalies = []
-        anomalies_per_server = rng.integers(2, 6)  # Randomly choose between 1 to 5 anomalies per server
-        print(f"Generating {anomalies_per_server} anomalies for server {server_id}")
+        anomalies_per_server = rng.integers(2, 8)
         for _ in range(anomalies_per_server):
             anomaly_type = rng.choice(["spike","drop"])
             
@@ -255,7 +254,6 @@ def generate_anomalies(
     return generated_anomalies
 
 # ========= Inject Anomalies =========
-
 
 generated_anomalies = generate_anomalies(
     server_ids=full_df["server_id"].unique(),
@@ -307,14 +305,68 @@ def inject_anomalies(df, anomalies):
 
 inject_anomalies(full_df, anomalies)
 
+# ========= Add recovery periods =========
+
+def inject_recovery_period(df, anomalies, seed=42):
+    rng = np.random.default_rng(seed)
+
+    for server_id, anomaly_list in anomalies.items():
+        for anomaly in anomaly_list:
+            end_anomaly_time = pd.to_datetime(anomaly["end"])
+            recovery_start = end_anomaly_time + pd.Timedelta(minutes=5)
+            recovery_end = recovery_start + pd.Timedelta(rng.integers(3,7) * 5, unit='m')
+            
+            metric = anomaly['metric']
+            
+            recovery_mask = (
+                (df['server_id'] == server_id) &
+                (df['timestamp'].between(recovery_start, recovery_end))
+            )
+            recovery_indices = df.index[recovery_mask]
+            if len(recovery_indices) == 0:
+                continue
+
+            end_value = df.loc[
+                (df['server_id'] == server_id) &
+                (df['timestamp'] == end_anomaly_time),
+                metric,
+            ].iloc[0] # extracts the row and coverts it into a pandas series, then extracts the value of the metric column
+            target_value = df.loc[
+                (df['server_id'] == server_id) &
+                (df['timestamp'] == recovery_end),
+                metric,
+            ].iloc[0]
+
+            recovery_values = np.linspace(end_value, target_value, len(recovery_indices))
+            recovery_values += np.random.normal(0, anomaly['scale'] / 2, len(recovery_indices))
+
+            if metric in ['cpu_percent', 'memory_percent']:
+                recovery_values = np.clip(recovery_values, 0, 100)
+            else:
+                recovery_values = np.clip(recovery_values, 0, None)
+
+            df.loc[recovery_indices, metric] = recovery_values
+            df.loc[recovery_indices, 'anomaly_type'] = f"recovery_{anomaly['anomaly_type']}"
+    return df
+
+inject_recovery_period(full_df, anomalies)
+
 # ========= Inject Predicitve Anomalies =========
+
+def create_predictive_trend(start_value, end_value, length, noise_scale):
+    progress = np.linspace(0, 1, length)
+    smooth_progress = progress * progress * (3 - 2 * progress)
+    trend = start_value + (end_value - start_value) * smooth_progress
+    noise = np.cumsum(np.random.normal(0, noise_scale, length))
+    noise -= np.linspace(noise[0], noise[-1], length)
+    return trend + noise
 
 def inject_predictive_anomalies(df, anomalies):
     rng = np.random.default_rng(42)
     
     for server_id, anomaly_list in anomalies.items():
         for anomaly in anomaly_list:
-            random_num = rng.integers(5, 60)
+            random_num = rng.integers(10, 60)
             start = pd.Timestamp(anomaly["start"])
             
             precursor_start = start - pd.Timedelta(minutes=int(random_num))
@@ -327,37 +379,25 @@ def inject_predictive_anomalies(df, anomalies):
             
             indices = precursor_condition.index
             
-            if anomaly["metric"] == "cpu_percent":
-                start_value = df.loc[precursor_condition.index[0], 'cpu_percent'] # Value at the start of the precursor period
-                end_value = anomaly['mean'] # Value at the end of the precursor period (just before the anomaly starts)
-                
-                # add some noise
-                noise_scale = np.random.normal(0, anomaly['scale'] / 2, len(precursor_condition))
-                trend = np.linspace(start_value, end_value, len(indices)) + noise_scale
-                
-                df.loc[indices, 'cpu_percent'] = np.clip(trend, 0, 100)
-                df.loc[indices, 'anomaly_type'] = f"predictive_{anomaly['anomaly_type']}"
-
-            if anomaly["metric"] == "memory_percent":
-                start_value = df.loc[precursor_condition.index[0], 'memory_percent']
-                end_value = anomaly['mean']
-                
-                noise_scale = np.random.normal(0, anomaly['scale'] / 2, len(precursor_condition))
-                trend = np.linspace(start_value, end_value, len(indices)) + noise_scale
-                
-                df.loc[indices, 'memory_percent'] = np.clip(trend, 0, 100)
-                df.loc[indices, 'anomaly_type'] = f"predictive_{anomaly['anomaly_type']}"
+            metric = anomaly["metric"]
             
-            if anomaly["metric"] == "disk_io":
-                start_value = df.loc[precursor_condition.index[0], 'disk_io']
-                end_value = anomaly['mean']
-                
-                noise_scale = np.random.normal(0, anomaly['scale'] / 2, len(precursor_condition))
-                trend = np.linspace(start_value, end_value, len(indices)) + noise_scale
-                
-                df.loc[indices, 'disk_io'] = np.clip(trend, 0, None)
-                df.loc[indices, 'anomaly_type'] = f"predictive_{anomaly['anomaly_type']}"
-                
+            
+            start_value = df.loc[precursor_condition.index[0], metric] # Value at the start of the precursor period
+            end_value = anomaly['mean'] # Value at the end of the precursor period (just before the anomaly starts)
+            
+            trend = create_predictive_trend(
+                start_value,
+                end_value,
+                len(indices),
+                anomaly['scale'] / 5,
+            )
+            
+            if metric in ("cpu_percent", "memory_percent"):
+                df.loc[indices, metric] = np.clip(trend, 0, 100)
+            else:
+                df.loc[indices, metric] = np.clip(trend, 0, None)
+            
+            df.loc[indices, 'anomaly_type'] = f"predictive_{anomaly['anomaly_type']}"
             df.loc[precursor_condition.index, 'is_predictive_anomaly'] = 1
     return df
         
