@@ -219,3 +219,5 @@ __marimo__/
 
 #data sets
 data/*.csv
+
+.DS_Store

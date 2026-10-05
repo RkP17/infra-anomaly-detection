@@ -205,7 +205,7 @@ def generate_anomalies(
 
     for server_id in server_ids:
         server_anomalies = []
-        anomalies_per_server = rng.integers(2, 8)
+        anomalies_per_server = rng.integers(3, 10)
         for _ in range(anomalies_per_server):
             anomaly_type = rng.choice(["spike","drop"])
             
