@@ -18,21 +18,6 @@
         "disk_io_lag_5m",
         "disk_io_lag_15m",
         "disk_io_lag_30m",
-        "disk_io_lag_60m",
-        "cpu_percent_5m_change",
-        "cpu_percent_15m_change",
-        "cpu_percent_30m_change",
-        "memory_percent_5m_change",
-        "memory_percent_15m_change",
-        "memory_percent_30m_change",
-        "disk_io_5m_change",
-        "disk_io_15m_change",
-        "disk_io_30m_change",
-        "cpu_percent_baseline",
-        "cpu_percent_residual",
-        "memory_percent_baseline",
-        "memory_percent_residual",
-        "disk_io_baseline",
-        "disk_io_residual"
+        "disk_io_lag_60m"
     ]
 }
